@@ -13,6 +13,7 @@ import (
     "os"
     "path/filepath"
     "strings"
+    "time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
@@ -28,17 +29,12 @@ type brokerConfig struct {
     cert []byte
 }
 
-type TopicConfig struct {
+type topicConfig struct {
     Partitions        *int    `json:"partitions,omitempty"`
     ReplicationFactor *int    `json:"replicationFactor,omitempty"`
     RetentionMinutes  *int    `json:"retentionInMinutes,omitempty"`
     RetentionBytes    *int    `json:"retentionInBytes,omitempty"`
     CleanupPolicy     *string `json:"cleanupPolicy,omitempty"` // "compact" or "delete"
-}
-
-type TopicRequest struct {
-    Name         string       `json:"name"`
-    Configuration TopicConfig `json:"configuration"`
 }
 
 type Quix struct {
@@ -48,7 +44,11 @@ type Quix struct {
     Token       string
 
     producer    *kafka.Producer
-    kafkaTopic  string
+}
+
+type TopicResponse struct {
+    Name string `json:"name"`
+    // ignore the other fields, we only need name
 }
 
 func (q *Quix) fetchBrokerConfig() (*brokerConfig, error) {
@@ -93,7 +93,7 @@ func (q *Quix) fetchBrokerConfig() (*brokerConfig, error) {
 func (q *Quix) connect() error {
     quixConfig, err := q.fetchBrokerConfig()
     if err != nil {
-        log.Fatalf("Failed to fetch broker kafkaConfig: %v", err)
+        return fmt.Errorf("failed to fetch broker config: %w", err)
     }
 
     kafkaConfig := kafka.ConfigMap{
@@ -126,37 +126,62 @@ func (q *Quix) connect() error {
     return nil
 }
 
-func (q *Quix) createTopic(topicName string, topicConfig *TopicConfig) error {
-    endpoint := fmt.Sprintf("%s/%s/topics", q.APIURL, q.Workspace)
-
-    reqBody := TopicRequest{
-        Name: topicName,
-        Configuration: *topicConfig,
-    }
-
-    bodyBytes, err := json.Marshal(reqBody)
+func (q *Quix) makeRequest(method string, endpoint string, bodyBytes []byte) *http.Request {
+    req, err := http.NewRequest(method, endpoint, bytes.NewBuffer(bodyBytes))
     if err != nil {
-        return fmt.Errorf("failed to marshal topic request: %w", err)
-    }
-
-    req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(bodyBytes))
-    if err != nil {
-        return fmt.Errorf("failed to build request: %w", err)
+        log.Fatalf("failed to build request: %v", err)
     }
 
     req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", q.Token))
     req.Header.Set("X-Version", "2.0")
     req.Header.Set("Content-Type", "application/json")
 
-    client := &http.Client{}
-    resp, err := client.Do(req)
+    return req
+
+}
+
+func (q *Quix) getTopic(topicName string) ([]byte, error) {
+    endpoint := fmt.Sprintf("%s/%s/topics/%s", q.APIURL, q.Workspace, topicName)
+
+    req := q.makeRequest("GET", endpoint, nil)
+    resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
     if err != nil {
-        return fmt.Errorf("request failed: %w", err)
+        return nil, fmt.Errorf("failed to get topic: %w", err)
+    }
+    defer resp.Body.Close()
+    body, _ := io.ReadAll(resp.Body)
+
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("GET /topics failed: %s", string(body))
+    }
+    fmt.Printf("✅ Topic '%s' already exists, skipping creation\n", topicName)
+    return body, nil
+}
+
+func (q *Quix) createTopic(topicName string, topicconfig *topicConfig) ([]byte, error) {
+    endpoint := fmt.Sprintf("%s/%s/topics", q.APIURL, q.Workspace)
+
+    reqBody := struct {
+        Name         string       `json:"name"`
+        Configuration topicConfig `json:"configuration"`
+    }{
+        Name: topicName,
+        Configuration: *topicconfig,
+    }
+
+    bodyBytes, err := json.Marshal(reqBody)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal topic request: %w", err)
+    }
+
+    req := q.makeRequest("POST", endpoint, bodyBytes)
+    resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+    if err != nil {
+        return nil, fmt.Errorf("request failed: %w", err)
     }
     defer resp.Body.Close()
 
     body, _ := io.ReadAll(resp.Body)
-
     if resp.StatusCode == http.StatusOK {
         fmt.Printf("✅ Topic '%s' created successfully\n", topicName)
     } else {
@@ -164,11 +189,22 @@ func (q *Quix) createTopic(topicName string, topicConfig *TopicConfig) error {
             fmt.Printf("✅ Topic '%s' already exists, skipping creation\n", topicName)
         } else {
             fmt.Printf("❌ Failed to create topic. Status: %d\nResponse: %s\n", resp.StatusCode, string(body))
-            log.Fatalf("Error creating topic '%s'. Exiting program.", topicName)
+            return nil, fmt.Errorf("Error creating topic '%s'. Exiting program.", topicName)
         }
     }
+    return body, nil
+}
 
-    return nil
+func (q *Quix) GetOrCreateTopic(topic string, topicconfig *topicConfig) (string, error) {
+    var responseJSON TopicResponse
+    responseBody, err := q.getTopic(topic)
+    if err != nil {
+        responseBody, err = q.createTopic(topic, topicconfig)
+    }
+    if err := json.Unmarshal(responseBody, &responseJSON); err != nil {
+        return "", fmt.Errorf("failed to parse response: %w", err)
+    }
+    return responseJSON.Name, err
 }
 
 func main() {
@@ -184,8 +220,8 @@ func main() {
         log.Fatal("--workspace, --topic, and --token are required")
     }
 
-    var topicConfig TopicConfig
-    err := json.Unmarshal([]byte(*topicConfigStr), &topicConfig)
+    var topicconfig topicConfig
+    err := json.Unmarshal([]byte(*topicConfigStr), &topicconfig)
     if err != nil {
         log.Fatal(err)
     }
@@ -194,14 +230,18 @@ func main() {
         Workspace:    *workspace,
         Topic:        *topic,
         Token:        *token,
-        kafkaTopic:   *workspace + "-" + *topic,
     }
-    quix.connect()
-    quix.createTopic(*topic, &topicConfig)
+    if err := quix.connect(); err != nil {
+        log.Fatalf("Kafka connection error: %v", err)
+    }
 
     producer := quix.producer
     defer producer.Close()
-    quixTopic := quix.kafkaTopic
+    kafkaTopic, err := quix.GetOrCreateTopic(*topic, &topicconfig)
+    if err != nil {
+        log.Fatalf("Error creating topic: %v", err)
+    }
+
     scanner := bufio.NewScanner(os.Stdin)
     count := 0
     flushAt := 10000
@@ -215,7 +255,7 @@ func main() {
         msgBytes, _ := json.Marshal(jsonObj)
 
         err := producer.Produce(&kafka.Message{
-            TopicPartition: kafka.TopicPartition{Topic: &quixTopic, Partition: kafka.PartitionAny},
+            TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
             Value:          msgBytes,
         }, nil)
         if err != nil {
