@@ -1,6 +1,7 @@
 package main
 
 import (
+    "bytes"
 	"bufio"
 	"encoding/json"
 	"encoding/base64"
@@ -25,6 +26,19 @@ type brokerConfig struct {
 	SSLCertBase64    string `json:"ssl.ca.cert"`
 
 	cert []byte
+}
+
+type TopicConfig struct {
+	Partitions        *int    `json:"partitions,omitempty"`
+	ReplicationFactor *int    `json:"replicationFactor,omitempty"`
+	RetentionMinutes  *int    `json:"retentionInMinutes,omitempty"`
+	RetentionBytes    *int    `json:"retentionInBytes,omitempty"`
+	CleanupPolicy     *string `json:"cleanupPolicy,omitempty"` // "compact" or "delete"
+}
+
+type TopicRequest struct {
+	Name         string       `json:"name"`
+	Configuration TopicConfig `json:"configuration"`
 }
 
 type Quix struct {
@@ -78,7 +92,7 @@ func (q *Quix) fetchBrokerConfig() (*brokerConfig, error) {
 	return &quixConfig, nil
 }
 
-func (q *Quix) Connect() error {
+func (q *Quix) connect() error {
     quixConfig, err := q.fetchBrokerConfig()
 	if err != nil {
 		log.Fatalf("Failed to fetch broker kafkaConfig: %v", err)
@@ -114,18 +128,70 @@ func (q *Quix) Connect() error {
 	return nil
 }
 
+func (q *Quix) createTopic(topicName string, topicConfig *TopicConfig,) error {
+    endpoint := fmt.Sprintf("%s/%s/topics", q.APIURL, q.Workspace)
+
+	reqBody := TopicRequest{
+		Name: topicName,
+		Configuration: *topicConfig,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal topic request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to build request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", q.Token))
+	req.Header.Set("X-Version", "2.0")
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusOK {
+		fmt.Printf("✅ Topic '%s' created successfully\n", topicName)
+	} else {
+	    if strings.Contains(string(body), "already exists") {
+            fmt.Printf("✅ Topic '%s' already exists, skipping creation\n", topicName)
+        } else {
+		    fmt.Printf("❌ Failed to create topic. Status: %d\nResponse: %s\n", resp.StatusCode, string(body))
+		    log.Fatalf("Error creating topic '%s'. Exiting program.", topicName)
+	    }
+	}
+
+	return nil
+}
+
+
 func main() {
 	// Command-line args
 	apiURL := flag.String("api-url", "https://portal-api.platform.quix.io", "Quix API base URL")
 	workspace := flag.String("workspace", "", "Quix workspace ID")
 	topic := flag.String("topic", "", "Kafka topic")
 	token := flag.String("token", "", "Quix bearer token")
+	topicConfigStr := flag.String("topic-config", "{}", "Topic config JSON")
 	flag.Parse()
 
 	if *workspace == "" || *topic == "" || *token == "" {
 		log.Fatal("--workspace, --topic, and --token are required")
 	}
 
+    var topicConfig TopicConfig
+    err := json.Unmarshal([]byte(*topicConfigStr), &topicConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
 	quix := Quix{
 		APIURL:       *apiURL,
 		Workspace:    *workspace,
@@ -133,11 +199,12 @@ func main() {
 		Token:        *token,
 		kafkaTopic:   *workspace + "-" + *topic,
 	}
-    quix.Connect()
+    quix.connect()
+    quix.createTopic(*topic, &topicConfig)
 
     producer := quix.producer
     defer producer.Close()
-    kafkaTopic := quix.kafkaTopic
+    quixTopic := quix.kafkaTopic
 	scanner := bufio.NewScanner(os.Stdin)
 	count := 0
 	flushAt := 10000
@@ -151,7 +218,7 @@ func main() {
 		msgBytes, _ := json.Marshal(jsonObj)
 
 		err := producer.Produce(&kafka.Message{
-			TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
+			TopicPartition: kafka.TopicPartition{Topic: &quixTopic, Partition: kafka.PartitionAny},
 			Value:          msgBytes,
 		}, nil)
 		if err != nil {
