@@ -47,7 +47,7 @@ type Quix struct {
 }
 
 type TopicResponse struct {
-    Name string `json:"name"`
+    ID string `json:"id"`
     // ignore the other fields, we only need name
 }
 
@@ -119,9 +119,22 @@ func (q *Quix) connect() error {
 
     producer, err := kafka.NewProducer(&kafkaConfig)
     if err != nil {
-        log.Fatalf("Creating Kafka producer failed: %v", err)
+        return fmt.Errorf("creating Kafka producer failed: %w", err)
     }
     q.producer = producer
+
+    // flushes out the producer event queue as a goroutine
+    // this is similar to doing Producer.poll() with python
+    go func() {
+        for e := range producer.Events() {
+            switch ev := e.(type) {
+            case *kafka.Message:
+                if ev.TopicPartition.Error != nil {
+                    log.Printf("❌ Delivery failed: %v", ev.TopicPartition.Error)
+                }
+            }
+        }
+    }()
 
     return nil
 }
@@ -204,7 +217,7 @@ func (q *Quix) GetOrCreateTopic(topic string, topicconfig *topicConfig) (string,
     if err := json.Unmarshal(responseBody, &responseJSON); err != nil {
         return "", fmt.Errorf("failed to parse response: %w", err)
     }
-    return responseJSON.Name, err
+    return responseJSON.ID, err
 }
 
 func main() {
@@ -243,9 +256,6 @@ func main() {
     }
 
     scanner := bufio.NewScanner(os.Stdin)
-    count := 0
-    flushAt := 10000
-
     for scanner.Scan() {
         var jsonObj map[string]interface{}
         if err := json.Unmarshal(scanner.Bytes(), &jsonObj); err != nil {
@@ -261,17 +271,11 @@ func main() {
         if err != nil {
             log.Printf("Failed to produce message: %v", err)
         }
-
-        count++
-        if count == flushAt {
-            producer.Flush(15000)
-            count = 0
-        }
     }
 
     if err := scanner.Err(); err != nil {
         log.Fatalf("Error reading stdin: %v", err)
     }
-    producer.Flush(15000)
+    producer.Flush(30000)
     fmt.Println("All messages flushed.")
 }
