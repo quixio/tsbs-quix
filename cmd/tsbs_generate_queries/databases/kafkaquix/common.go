@@ -8,27 +8,30 @@ import (
 	"github.com/timescale/tsbs/pkg/query"
 )
 
-// BaseGenerator contains settings specific for KafkaQuix
+// BaseGenerator contains settings specific for Akumuli database.
 type BaseGenerator struct {
 }
 
-// GenerateEmptyQuery returns an empty query.KafkaQuix.
-func (g *BaseGenerator) GenerateEmptyQuery() query.Query {
-	return query.NewKafkaQuix()
+// GenerateEmptyQuery returns an empty query.HTTP
+func (d *Devops) GenerateEmptyQuery() query.Query {
+	return query.NewHTTP()
 }
 
 // fillInQuery fills the query struct with data.
-func (g *BaseGenerator) fillInQuery(qi query.Query, humanLabel, humanDesc, httpQuery string) {
-	q := qi.(*query.KafkaQuix)
+func (g *BaseGenerator) fillInQuery(qi query.Query, humanLabel, humanDesc, path string, begin, end int64) {
+	q := qi.(*query.HTTP)
 	q.HumanLabel = []byte(humanLabel)
 	q.HumanDescription = []byte(humanDesc)
-	q.HttpQuery = []byte(httpQuery)
+	q.Method = []byte("GET")
+	q.Path = []byte(path)
+	q.Body = []byte("")
+	q.StartTimestamp = begin
+	q.EndTimestamp = end
 }
 
-// NewDevops creates a new devops use case query generator.
+// NewDevops makes an Devops object ready to generate Queries.
 func (g *BaseGenerator) NewDevops(start, end time.Time, scale int) (utils.QueryGenerator, error) {
 	core, err := devops.NewCore(start, end, scale)
-
 	if err != nil {
 		return nil, err
 	}

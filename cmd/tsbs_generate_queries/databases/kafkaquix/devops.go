@@ -36,8 +36,8 @@ func (d *Devops) MaxAllCPU(qi query.Query, nHosts int, duration time.Duration) {
 	panicIfErr(err)
 
 	httpQuery := fmt.Sprintf(
-		"/cpu/cpu-max-all?hosts=%s&metrics=%s&start=%s&end=%s",
-		hosts,
+		"/cpu/max-all?hosts=%s&metrics=%s&start=%s&end=%s",
+		strings.Join(hosts, ","),
 		metrics,
 		interval.StartString(),
 		interval.EndString(),
@@ -45,5 +45,5 @@ func (d *Devops) MaxAllCPU(qi query.Query, nHosts int, duration time.Duration) {
 
 	humanLabel := devops.GetMaxAllLabel("KafkaQuix", nHosts)
 	humanDesc := fmt.Sprintf("%s: %s", humanLabel, interval.StartString())
-	d.fillInQuery(qi, humanLabel, humanDesc, httpQuery)
+	d.fillInQuery(qi, humanLabel, humanDesc, httpQuery, interval.StartUnixNano(), interval.EndUnixNano())
 }

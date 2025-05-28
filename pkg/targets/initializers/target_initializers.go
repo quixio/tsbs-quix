@@ -50,7 +50,6 @@ func GetTarget(format string) targets.ImplementedTarget {
 	case constants.FormatJSONLines:
         return jsonlines.NewTarget()
 	case constants.FormatKafkaQuix:
-		println("KAFKAQUIX FORMAT!!!!!!!")
         return kafkaquix.NewTarget()
 	}
 
