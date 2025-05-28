@@ -24,10 +24,10 @@ type Devops struct {
 
 
 type QueryBody struct {
-	Hostnames 	[]string 	`json:"hosts"`
+	Hostnames 	[]string 	`json:"hostnames"`
 	Metrics		[]string	`json:"metrics"`
-	Begin		string		`json:"start"`
-	End			string		`json:"end"`
+	Begin		string		`json:"timestamp_begin"`
+	End			string		`json:"timestamp_end"`
 }
 
 
