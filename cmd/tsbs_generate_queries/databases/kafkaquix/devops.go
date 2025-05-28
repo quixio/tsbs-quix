@@ -2,8 +2,8 @@ package kafkaquix
 
 import (
 	"fmt"
-	"strings"
 	"time"
+	"encoding/json"
 
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/uses/devops"
 	"github.com/timescale/tsbs/pkg/query"
@@ -20,6 +20,23 @@ func panicIfErr(err error) {
 type Devops struct {
 	*BaseGenerator
 	*devops.Core
+}
+
+
+type QueryBody struct {
+	Hostnames 	[]string 	`json:"hosts"`
+	Metrics		[]string	`json:"metrics"`
+	Begin		string		`json:"start"`
+	End			string		`json:"end"`
+}
+
+
+func (qb QueryBody) ToBytes() []byte {
+    b, err := json.Marshal(qb)
+    if err != nil {
+        panic(err)
+    }
+    return b
 }
 
 
@@ -52,17 +69,16 @@ func (d *Devops) GroupByTime(qi query.Query, nhosts, numMetrics int, timeRange t
 	metrics, err := devops.GetCPUMetricsSlice(numMetrics)
 	panicIfErr(err)
 
-	httpQuery := fmt.Sprintf(
-		"/cpu/single-groupby?hosts=%s&metrics=%s&start=%s&end=%s",
-		strings.Join(hosts, ","),
-		strings.Join(metrics, ","),
-		interval.StartString(),
-		interval.EndString(),
-	)
+	q := QueryBody{
+		Hostnames: hosts,
+		Metrics: metrics,
+		Begin: interval.StartString(),
+		End: interval.EndString(),
+	}
 
 	humanLabel := fmt.Sprintf("KafkaQuix max cpu, rand %4d hosts, rand %s by 1m", nhosts, timeRange)
 	humanDesc := fmt.Sprintf("%s: %s", humanLabel, interval.StartString())
-	d.fillInQuery(qi, humanLabel, humanDesc, httpQuery, interval.StartUnixNano(), interval.EndUnixNano())
+	d.fillInQuery(qi, humanLabel, humanDesc, "/single-groupby", &q, interval.StartUnixNano(), interval.EndUnixNano())
 }
 
 
@@ -73,20 +89,19 @@ func (d *Devops) GroupByTime(qi query.Query, nhosts, numMetrics int, timeRange t
 // cpu-max-all-1
 // cpu-max-all-8
 func (d *Devops) MaxAllCPU(qi query.Query, nHosts int, duration time.Duration) {
-	metrics := strings.Join(devops.GetAllCPUMetrics(), ",")
+	metrics := devops.GetAllCPUMetrics()
 	interval := d.Interval.MustRandWindow(duration)
 	hosts, err := d.GetRandomHosts(nHosts)
 	panicIfErr(err)
 
-	httpQuery := fmt.Sprintf(
-		"/cpu/max-all?hosts=%s&metrics=%s&start=%s&end=%s",
-		strings.Join(hosts, ","),
-		metrics,
-		interval.StartString(),
-		interval.EndString(),
-	)
+	q := QueryBody{
+		Hostnames: hosts,
+		Metrics: metrics,
+		Begin: interval.StartString(),
+		End: interval.EndString(),
+	}
 
 	humanLabel := devops.GetMaxAllLabel("KafkaQuix", nHosts)
 	humanDesc := fmt.Sprintf("%s: %s", humanLabel, interval.StartString())
-	d.fillInQuery(qi, humanLabel, humanDesc, httpQuery, interval.StartUnixNano(), interval.EndUnixNano())
+	d.fillInQuery(qi, humanLabel, humanDesc, "/max-all", &q, interval.StartUnixNano(), interval.EndUnixNano())
 }

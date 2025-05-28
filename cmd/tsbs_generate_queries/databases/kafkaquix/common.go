@@ -2,6 +2,7 @@ package kafkaquix
 
 import (
 	"time"
+	"path"
 
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/uses/devops"
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/utils"
@@ -18,13 +19,13 @@ func (d *Devops) GenerateEmptyQuery() query.Query {
 }
 
 // fillInQuery fills the query struct with data.
-func (g *BaseGenerator) fillInQuery(qi query.Query, humanLabel, humanDesc, path string, begin, end int64) {
+func (g *BaseGenerator) fillInQuery(qi query.Query, humanLabel, humanDesc, endpoint string, qb *QueryBody, begin, end int64) {
 	q := qi.(*query.HTTP)
 	q.HumanLabel = []byte(humanLabel)
 	q.HumanDescription = []byte(humanDesc)
-	q.Method = []byte("GET")
-	q.Path = []byte(path)
-	q.Body = []byte("")
+	q.Method = []byte("POST")
+	q.Path = []byte(path.Join("/cpu", endpoint))
+	q.Body = qb.ToBytes()
 	q.StartTimestamp = begin
 	q.EndTimestamp = end
 }

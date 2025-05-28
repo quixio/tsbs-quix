@@ -48,6 +48,7 @@ func (w *HTTPClient) Do(q *query.HTTP, opts *HTTPClientDoOptions) (lag float64, 
 	if err != nil {
 		panic(err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 
 	// Perform request
 	start := time.Now()
