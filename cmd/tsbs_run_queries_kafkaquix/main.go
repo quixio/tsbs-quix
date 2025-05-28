@@ -1,4 +1,4 @@
-// tsbs_run_queries_akumuli speed tests Akumuli using requests from stdin.
+// tsbs_run_queries_kafkaquix speed tests KafkaQuix using requests from stdin.
 //
 // It reads encoded Query objects from stdin, and makes concurrent requests
 // to the provided HTTP endpoint. This program has no knowledge of the
@@ -29,7 +29,7 @@ func init() {
 	var config query.BenchmarkRunnerConfig
 	config.AddToFlagSet(pflag.CommandLine)
 
-	pflag.StringVar(&endpoint, "endpoint", "http://localhost:8181", "Akumuli API endpoint IP address.")
+	pflag.StringVar(&endpoint, "endpoint", "http://localhost:8181", "KafkaQuix API endpoint IP address.")
 
 	pflag.Parse()
 
