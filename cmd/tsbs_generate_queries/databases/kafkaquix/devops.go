@@ -26,8 +26,8 @@ type Devops struct {
 type QueryBody struct {
 	Hostnames 	[]string 	`json:"hostnames,omitempty"`
 	Metrics		[]string	`json:"metrics,omitempty"`
-	Begin		string		`json:"timestamp_begin"`
-	End			string		`json:"timestamp_end"`
+	Begin		string		`json:"timestamp_begin,omitempty"`
+	End			string		`json:"timestamp_end,omitempty"`
 }
 
 
@@ -170,12 +170,5 @@ func (d *Devops) HighCPUForHosts(qi query.Query, nHosts int) {
 func (d *Devops) LastPointPerHost(qi query.Query) {
 	humanLabel := "KafkaQuix last event per hostname"
 	humanDesc := humanLabel + ": cpu"
-
-	q := QueryBody{
-		Hostnames: []string{},
-		Metrics: []string{},
-		Begin: "",
-		End: "",
-	}
-	d.fillInQuery(qi, humanLabel, humanDesc, "/lastpoint", &q, 0, 0)
+	d.fillInQuery(qi, humanLabel, humanDesc, "/lastpoint", &QueryBody{}, 0, 0)
 }
