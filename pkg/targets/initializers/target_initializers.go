@@ -17,6 +17,7 @@ import (
 	"github.com/timescale/tsbs/pkg/targets/timestream"
 	"github.com/timescale/tsbs/pkg/targets/victoriametrics"
 	"github.com/timescale/tsbs/pkg/targets/jsonlines"
+	"github.com/timescale/tsbs/pkg/targets/kafkaquix"
 	"strings"
 )
 
@@ -48,7 +49,10 @@ func GetTarget(format string) targets.ImplementedTarget {
 		return questdb.NewTarget()
 	case constants.FormatJSONLines:
         return jsonlines.NewTarget()
+	case constants.FormatKafkaQuix:
+        return kafkaquix.NewTarget()
 	}
+
 
 	supportedFormatsStr := strings.Join(constants.SupportedFormats(), ",")
 	panic(fmt.Sprintf("Unrecognized format %s, supported: %s", format, supportedFormatsStr))
