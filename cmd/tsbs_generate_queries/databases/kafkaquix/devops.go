@@ -24,8 +24,8 @@ type Devops struct {
 
 
 type QueryBody struct {
-	Hostnames 	[]string 	`json:"hostnames"`
-	Metrics		[]string	`json:"metrics"`
+	Hostnames 	[]string 	`json:"hostnames,omitempty"`
+	Metrics		[]string	`json:"metrics,omitempty"`
 	Begin		string		`json:"timestamp_begin"`
 	End			string		`json:"timestamp_end"`
 }
@@ -89,14 +89,12 @@ func (d *Devops) GroupByTime(qi query.Query, nhosts, numMetrics int, timeRange t
 // cpu-max-all-1
 // cpu-max-all-8
 func (d *Devops) MaxAllCPU(qi query.Query, nHosts int, timeRange time.Duration) {
-	metrics := devops.GetAllCPUMetrics()
 	interval := d.Interval.MustRandWindow(timeRange)
 	hosts, err := d.GetRandomHosts(nHosts)
 	panicIfErr(err)
 
 	q := QueryBody{
 		Hostnames: hosts,
-		Metrics: metrics,
 		Begin: interval.StartString(),
 		End: interval.EndString(),
 	}
@@ -124,7 +122,6 @@ func (d *Devops) GroupByTimeAndPrimaryTag(qi query.Query, numMetrics int) {
 	interval := d.Interval.MustRandWindow(devops.DoubleGroupByDuration)
 
 	q := QueryBody{
-		Hostnames: []string{}, // translates to all hostnames
 		Metrics: metrics,
 		Begin: interval.StartString(),
 		End: interval.EndString(),
