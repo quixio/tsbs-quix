@@ -158,7 +158,7 @@ func (d *Devops) HighCPUForHosts(qi query.Query, nHosts int) {
 
 	q := QueryBody{
 		Hostnames: hostnames,
-		Metrics: []string{"usage_user"},
+		Metrics: devops.GetAllCPUMetrics(),
 		Begin: interval.StartString(),
 		End: interval.EndString(),
 	}
