@@ -14,6 +14,9 @@ import (
     "path/filepath"
     "strings"
     "time"
+    "os/signal"
+    "syscall"
+    "context"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
@@ -40,7 +43,6 @@ type topicConfig struct {
 type Quix struct {
     APIURL      string
     Workspace   string
-    Topic       string
     Token       string
 
     producer    *kafka.Producer
@@ -202,7 +204,7 @@ func (q *Quix) createTopic(topicName string, topicconfig *topicConfig) ([]byte, 
             fmt.Printf("✅ Topic '%s' already exists, skipping creation\n", topicName)
         } else {
             fmt.Printf("❌ Failed to create topic. Status: %d\nResponse: %s\n", resp.StatusCode, string(body))
-            return nil, fmt.Errorf("Error creating topic '%s'. Exiting program.", topicName)
+            return nil, fmt.Errorf("error creating topic '%s'; exiting program", topicName)
         }
     }
     return body, nil
@@ -220,6 +222,61 @@ func (q *Quix) GetOrCreateTopic(topic string, topicconfig *topicConfig) (string,
     return responseJSON.ID, err
 }
 
+func runQuixProducer(ctx context.Context, quix *Quix, topic string, topicConfigStr string) error {
+    if err := quix.connect(); err != nil {
+        log.Printf("Kafka connection error: %v", err)
+        return err
+    }
+
+    var topicconfig topicConfig
+    err := json.Unmarshal([]byte(topicConfigStr), &topicconfig)
+    if err != nil {
+        log.Printf("Error deserializing topic-config json: %v", err)
+        return err
+    }
+
+    producer := quix.producer
+    defer producer.Close()
+    kafkaTopic, err := quix.GetOrCreateTopic(topic, &topicconfig)
+    if err != nil {
+        log.Printf("Error creating topic: %v", err)
+        return err
+    }
+
+    scanner := bufio.NewScanner(os.Stdin)
+    for scanner.Scan() {
+        select {
+        // check for signal raise
+        case <- ctx.Done():
+            return ctx.Err()
+        default:
+            var jsonObj map[string]interface{}
+            if err := json.Unmarshal(scanner.Bytes(), &jsonObj); err != nil {
+                log.Printf("Skipping invalid JSON line: %v", err)
+                continue
+            }
+            msgBytes, _ := json.Marshal(jsonObj)
+
+            err := producer.Produce(&kafka.Message{
+                TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
+                Value:          msgBytes,
+            }, nil)
+            if err != nil {
+                log.Printf("Failed to produce message: %v", err)
+            }
+        }
+    }
+
+    if err := scanner.Err(); err != nil {
+        log.Printf("Error reading stdin: %v", err)
+        return err
+    }
+    producer.Flush(30000)
+    fmt.Println("All messages flushed.")
+
+    return nil
+}
+
 func main() {
     // Command-line args
     apiURL := flag.String("api-url", "https://portal-api.platform.quix.io", "Quix API base URL")
@@ -227,55 +284,37 @@ func main() {
     topic := flag.String("topic", "", "Kafka topic")
     token := flag.String("token", "", "Quix bearer token")
     topicConfigStr := flag.String("topic-config", "{}", "Topic config JSON")
+    asService := flag.Bool("as-service", false, "Whether this is running as a kubernetes service and thus stay running until manually terminated")
     flag.Parse()
+
+    // This block sets up a context that listens for signals
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+    sigs := make(chan os.Signal, 1)
+    signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+    go func() {
+        sig := <-sigs
+        fmt.Printf("%s received: shutting down application...", sig)
+        cancel()
+    }()
 
     if *workspace == "" || *topic == "" || *token == "" {
         log.Fatal("--workspace, --topic, and --token are required")
     }
 
-    var topicconfig topicConfig
-    err := json.Unmarshal([]byte(*topicConfigStr), &topicconfig)
-    if err != nil {
-        log.Fatal(err)
-    }
     quix := Quix{
         APIURL:       *apiURL,
         Workspace:    *workspace,
-        Topic:        *topic,
         Token:        *token,
     }
-    if err := quix.connect(); err != nil {
-        log.Fatalf("Kafka connection error: %v", err)
+
+    if err := runQuixProducer(ctx, &quix, *topic, *topicConfigStr); err != nil {
+        log.Fatalf("Error while running Quix producer: %v", err)
     }
 
-    producer := quix.producer
-    defer producer.Close()
-    kafkaTopic, err := quix.GetOrCreateTopic(*topic, &topicconfig)
-    if err != nil {
-        log.Fatalf("Error creating topic: %v", err)
+    if *asService {
+        // Only does this if producing was fully successful
+        log.Println("Keeping the App running to avoid duplicate data generation; waiting for manual shutdown...")
+        <-ctx.Done()
     }
-
-    scanner := bufio.NewScanner(os.Stdin)
-    for scanner.Scan() {
-        var jsonObj map[string]interface{}
-        if err := json.Unmarshal(scanner.Bytes(), &jsonObj); err != nil {
-            log.Printf("Skipping invalid JSON line: %v", err)
-            continue
-        }
-        msgBytes, _ := json.Marshal(jsonObj)
-
-        err := producer.Produce(&kafka.Message{
-            TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
-            Value:          msgBytes,
-        }, nil)
-        if err != nil {
-            log.Printf("Failed to produce message: %v", err)
-        }
-    }
-
-    if err := scanner.Err(); err != nil {
-        log.Fatalf("Error reading stdin: %v", err)
-    }
-    producer.Flush(30000)
-    fmt.Println("All messages flushed.")
 }
