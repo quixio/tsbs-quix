@@ -244,6 +244,7 @@ func runQuixProducer(ctx context.Context, quix *Quix, topic string, topicConfigS
     }
 
     scanner := bufio.NewScanner(os.Stdin)
+    count := 0
     for scanner.Scan() {
         select {
         // check for signal raise
@@ -263,6 +264,10 @@ func runQuixProducer(ctx context.Context, quix *Quix, topic string, topicConfigS
             }, nil)
             if err != nil {
                 log.Printf("Failed to produce message: %v", err)
+            }
+            count++
+            if count%10000 == 0 {
+                log.Printf("Current produced message count: %d\n last message produced: %s", count, string(msgBytes))
             }
         }
     }
