@@ -129,6 +129,7 @@ func (q *Quix) connect() error {
     // this is similar to doing Producer.poll() with python
     go func() {
         for e := range producer.Events() {
+            log.Printf("HANDLING EVENT %s", e)
             switch ev := e.(type) {
             case *kafka.Message:
                 if ev.TopicPartition.Error != nil {
