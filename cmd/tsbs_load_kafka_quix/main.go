@@ -117,6 +117,8 @@ func (q *Quix) connect() error {
             return fmt.Errorf("failed to write CA cert: %w", err)
         }
         kafkaConfig["ssl.ca.location"] = certPath
+        kafkaConfig["queue.buffering.max.messages"] = 500000
+        kafkaConfig["queue.buffering.max.kbytes"] = 1048576 * 2 // 2 GB
     }
 
     producer, err := kafka.NewProducer(&kafkaConfig)
@@ -129,7 +131,6 @@ func (q *Quix) connect() error {
     // this is similar to doing Producer.poll() with python
     go func() {
         for e := range producer.Events() {
-            log.Printf("HANDLING EVENT %s", e)
             switch ev := e.(type) {
             case *kafka.Message:
                 if ev.TopicPartition.Error != nil {
@@ -223,6 +224,32 @@ func (q *Quix) GetOrCreateTopic(topic string, topicconfig *topicConfig) (string,
     return responseJSON.ID, err
 }
 
+func produceMessage(producer *kafka.Producer, topic string, value []byte) error {
+    msg := &kafka.Message{
+        TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+        Value:          value,
+    }
+
+    for {
+        err := producer.Produce(msg, nil)
+        if err == nil {
+            // Successfully queued message for delivery
+            return nil
+        }
+
+        if err.(kafka.Error).Code() == kafka.ErrQueueFull {
+            log.Println("Producer queue is full, flushing some messages and then resuming...")
+            remaining := producer.Flush(3000) // Wait up to 5 seconds for delivery
+            log.Printf("Flushing complete; messages remaining in queue: %d", remaining)
+            continue
+        }
+
+        // Other error - fail
+        log.Printf("Error while attempting to produce message: %v", err)
+        return err
+    }
+}
+
 func runQuixProducer(ctx context.Context, quix *Quix, topic string, topicConfigStr string) error {
     if err := quix.connect(); err != nil {
         log.Printf("Kafka connection error: %v", err)
@@ -259,12 +286,8 @@ func runQuixProducer(ctx context.Context, quix *Quix, topic string, topicConfigS
             }
             msgBytes, _ := json.Marshal(jsonObj)
 
-            err := producer.Produce(&kafka.Message{
-                TopicPartition: kafka.TopicPartition{Topic: &kafkaTopic, Partition: kafka.PartitionAny},
-                Value:          msgBytes,
-            }, nil)
-            if err != nil {
-                log.Printf("Failed to produce message: %v", err)
+            if err := produceMessage(producer, kafkaTopic, msgBytes); err != nil {
+                return err
             }
             count++
             if count%10000 == 0 {
@@ -277,7 +300,12 @@ func runQuixProducer(ctx context.Context, quix *Quix, topic string, topicConfigS
         log.Printf("Error reading stdin: %v", err)
         return err
     }
-    producer.Flush(30000)
+    fmt.Println("Messages finished producing, flushing remaining messages...")
+    remaining := 1
+    for remaining > 0 {
+        remaining = producer.Flush(10000)
+        log.Println("Round of flushing complete; messages remaining in queue: %d", remaining)
+    }
     fmt.Println("All messages flushed.")
 
     return nil
