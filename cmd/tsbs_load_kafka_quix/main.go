@@ -304,7 +304,7 @@ func runQuixProducer(ctx context.Context, quix *Quix, topic string, topicConfigS
     remaining := 1
     for remaining > 0 {
         remaining = producer.Flush(10000)
-        log.Println("Round of flushing complete; messages remaining in queue: %d", remaining)
+        log.Printf("Round of flushing complete; messages remaining in queue: %d", remaining)
     }
     fmt.Println("All messages flushed.")
 
